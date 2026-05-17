@@ -1,7 +1,8 @@
+from datetime import datetime, timedelta
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
 import os
+import re
 
 st.set_page_config(page_title="KPI Xe Tồn 24h", layout="wide", page_icon="🚗")
 st.title("🚗 QUẢN LÝ XE TỒN 24H - KPI QUÝ II")
@@ -61,14 +62,11 @@ if menu == "📤 Import Báo Giá Excel":
 
                 # Biển số
                 if "Biển số" in line and ":" in line:
-                    bien_so = line.split(":")[1].strip()
+                    bien_so = line.split(":")[-1].strip()
 
                 # Chủ xe - Xử lý dòng nhiều
                 if "Chủ xe" in line:
-                    ten_chu_xe = line.split(":", 1)[-1].strip()
-                    # Lấy dòng tiếp theo nếu là phần tiếp của tên
-                    if i+1 < len(lines) and ("GSM" in lines[i+1] or "VÀ THÔNG MINH" in lines[i+1]):
-                        ten_chu_xe += " " + lines[i+1].strip()
+                    ten_chu_xe = line.split(":")[1].split("Biển")[0].strip()
 
                 # Người mang xe đến
                 if "Người mang xe đến" in line:
@@ -84,27 +82,27 @@ if menu == "📤 Import Báo Giá Excel":
 
                 # Mã kiểu xe
                 if "Mã kiểu xe" in line:
-                    ma_kieu_xe = line.split(":")[1].strip()
+                    ma_kieu_xe = line.split(":")[-1].strip()
 
                 # Số khung
                 if "Số khung" in line:
-                    so_khung = line.split(":")[3].split("Email")[0].strip()
+                    so_khung = line.split(":")[-1].split("Email")[0].strip()
 
             # Xác định HTTT
-            if "HTTT" in full_text:
-                httt = "C"   # Theo file mẫu hầu hết là C
+            pattern = r"\d+%\s+\d+\s+\b([WC])\b"
+            httt = re.findall(pattern, full_text)
 
             new_row = {
-                'so_phieu': so_phieu or "N/A",
-                'bien_so': bien_so or "",
-                'ten_chu_xe': ten_chu_xe.strip() or "",
-                'yeu_cau_kh': yeu_cau_kh or "",
-                'ma_kieu_xe': ma_kieu_xe or "",
-                'so_khung': so_khung or "",
-                'nguoi_mang_xe': nguoi_mang_xe or "",
-                'sdt_nguoi_mang': sdt_nguoi_mang or "",
-                'trang_thai': "Báo Giá",
-                'ngay_tao': datetime.now(),
+                'Số WO': so_phieu or "N/A",
+                'Biển số': bien_so or "",
+                'Tên chủ xe': ten_chu_xe.strip() or "",
+                'Yêu cầu': yeu_cau_kh or "",
+                'Loại xe': ma_kieu_xe or "",
+                'Số khung': so_khung or "",
+                'Người mang xe đến': nguoi_mang_xe or "",
+                'SĐT người mang xe đến': sdt_nguoi_mang or "",
+                'Trạng thái': "Báo Giá",
+                'Ngày tạo': datetime.now(),
                 'thoi_gian_bat_dau_lsc': None,
                 'is_xe_ton': True,
                 'ly_do_khong_ton': "",
@@ -122,8 +120,8 @@ if menu == "📤 Import Báo Giá Excel":
             st.success(f"✅ Import thành công: **{so_phieu}**")
             st.json(new_row)
             
-            if st.checkbox("Debug - Xem full text"):
-                st.text(full_text[:3000])
+            # if st.checkbox("Debug - Xem full text"):
+            #     st.text(full_text[:3000])
                 
         except Exception as e:
             st.error(f"Lỗi: {str(e)}")
