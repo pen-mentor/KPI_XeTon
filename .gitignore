@@ -1,0 +1,17 @@
+# Virtual Environment
+venv/
+__pycache__/
+*.pyc
+
+# Data
+data/__pycache__/
+*.csv
+*.xlsx
+*.pdf
+
+# Streamlit
+.streamlit/secrets.toml
+
+# General
+.DS_Store
+*.log
