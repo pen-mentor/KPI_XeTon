@@ -58,15 +58,17 @@ if menu == "📤 Import Báo Giá Excel":
                 # Số phiếu
                 if "Số phiếu:" in line:
                     so_phieu = line.split(":")[1].split("Ngày")[0].strip()
-                    # so_phieu = line.split("Số phiếu:")[1].strip()
 
                 # Biển số
                 if "Biển số" in line and ":" in line:
                     bien_so = line.split(":")[-1].strip()
 
                 # Chủ xe - Xử lý dòng nhiều
-                if "Chủ xe" in line:
-                    ten_chu_xe = line.split(":")[1].split("Biển")[0].strip()
+                if "GSM" in full_text:
+                    ten_chu_xe = "GSM"
+                else:
+                    if "Chủ xe" in line:
+                        ten_chu_xe = line.split(":")[1].split("Biển")[0].strip()
 
                 # Người mang xe đến
                 if "Người mang xe đến" in line:
@@ -120,8 +122,8 @@ if menu == "📤 Import Báo Giá Excel":
             st.success(f"✅ Import thành công: **{so_phieu}**")
             st.json(new_row)
             
-            # if st.checkbox("Debug - Xem full text"):
-            #     st.text(full_text[:3000])
+            if st.checkbox("Debug - Xem full text"):
+                st.text(full_text[:3000])
                 
         except Exception as e:
             st.error(f"Lỗi: {str(e)}")
