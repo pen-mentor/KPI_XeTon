@@ -4,6 +4,41 @@ import pandas as pd
 import os
 import re
 
+# ====================== HÀM MÀN HÌNH CHI TIẾT (ĐẶT Ở ĐÂY - TRÊN CÙNG) ======================
+@st.dialog("📋 Chi tiết", width="large")
+def show_detail_dialog(row):
+    st.subheader(f"Chi tiết - {row.get('so_phieu', 'N/A')}")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"**Biển số:** {row.get('bien_so', 'N/A')}")
+        st.write(f"**Tên chủ xe:** {row.get('ten_chu_xe', 'N/A')}")
+        st.write(f"**Yêu cầu KH:** {row.get('yeu_cau_kh', 'N/A')}")
+        st.write(f"**Người mang xe đến:** {row.get('nguoi_mang_xe', 'N/A')}")
+    with col2:
+        st.write(f"**Trạng thái:** {row.get('trang_thai', 'N/A')}")
+        st.write(f"**CVDV:** {row.get('cvdv_name', 'N/A')}")
+        if 'thoi_gian_ton_gio' in row:
+            st.write(f"**Thời gian tồn:** {row['thoi_gian_ton_gio']:.1f} giờ")
+        st.write(f"**Ngày tạo:** {str(row.get('ngay_tao', 'N/A'))[:10]}")
+    
+    st.divider()
+    
+    if st.session_state.role in ["admin", "manager"]:
+        st.write("**Chỉnh sửa nhanh (Admin/Manager)**")
+        new_trangthai = st.selectbox("Trạng thái mới", ["Báo Giá", "Lệnh Sửa Chữa (LSC)", "Hoàn Thành", "Hủy"], 
+                                     index=["Báo Giá", "Lệnh Sửa Chữa (LSC)", "Hoàn Thành", "Hủy"].index(row.get('trang_thai', 'Báo Giá')))
+        if st.button("💾 Lưu thay đổi"):
+            mask = df['so_phieu'] == row['so_phieu']
+            if mask.any():
+                df.loc[mask, 'trang_thai'] = new_trangthai
+                df.to_csv(DATA_FILE, index=False)
+                st.success("✅ Đã cập nhật!")
+                st.rerun()
+    
+    if st.button("Đóng", type="primary", use_container_width=True):
+        st.rerun()
+
 # ====================== ĐĂNG NHẬP ======================
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -11,7 +46,6 @@ if 'logged_in' not in st.session_state:
     st.session_state.display_name = ""
     st.session_state.role = ""
 
-# Danh sách người dùng
 USERS = {
     "quyennv": {"password": "123", "display_name": "Nguyễn Văn Quyền", "role": "cvdv"},
     "sonnt": {"password": "123", "display_name": "Nguyễn Trịnh Sơn", "role": "cvdv"},
@@ -19,7 +53,6 @@ USERS = {
     "quyenttk": {"password": "090524@quyen", "display_name": "Trần Thị Kim Quyên", "role": "manager"},
 }
 
-# Form đăng nhập
 if not st.session_state.logged_in:
     st.set_page_config(page_title="Đăng nhập - KPI", layout="centered")
     st.title("🚗 Đăng nhập Hệ thống KPI")
@@ -76,13 +109,18 @@ menu_options = ["🚨 Danh sách Xe Đang Tồn", "📋 Tất cả Lệnh Sửa 
 
 if st.session_state.role in ["cvdv", "admin"]:
     menu_options = ["📤 Import Báo Giá PDF", "🚨 Danh sách Xe Đang Tồn", 
-                   "📋 Tất cả Lệnh Sửa Chữa", "⚙️ Quản lý Trạng thái"]
+                   "📋 Tất cả Lệnh Sửa Chữa"]
 
-menu = st.sidebar.selectbox("Chọn chức năng", menu_options)
+menu = st.sidebar.radio(
+    "Chọn chức năng",
+    menu_options,
+    index=0,                    # Mặc định chọn mục đầu tiên
+    horizontal=False            # Hiển thị dạng dọc (cố định, đẹp)
+)
 
-cvdv_name = st.session_state.display_name   # Tên hiển thị thay vì username
+cvdv_name = st.session_state.display_name
 
-# ====================== 1. IMPORT PDF ======================
+# ====================== 1. IMPORT PDF (GIỮ NGUYÊN + KIỂM TRA TRÙNG) ======================
 if menu == "📤 Import Báo Giá PDF":
     st.header("📤 Import Báo Giá từ PDF")
 
@@ -96,7 +134,6 @@ if menu == "📤 Import Báo Giá PDF":
                     full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
                     lines = [line.strip() for line in full_text.split('\n') if line.strip()]
 
-                # ==================== PARSE (GIỮ NGUYÊN CỦA BẠN) ====================
                 so_phieu = bien_so = ten_chu_xe = yeu_cau_kh = ma_kieu_xe = so_khung = ""
                 nguoi_mang_xe = sdt = sdt_nguoi_mang = httt = ngay_tao = ""
 
@@ -148,13 +185,11 @@ if menu == "📤 Import Báo Giá PDF":
             except Exception as e:
                 st.error(f"Lỗi: {str(e)}")
 
-    # Preview
     if 'preview_data' in st.session_state:
         st.success(f"📄 Đã đọc báo giá số: **{st.session_state.uploaded_file_name}**")
         st.subheader("📋 Thông tin Preview")
         st.dataframe(pd.DataFrame([st.session_state.preview_data]), use_container_width=True, hide_index=True)
 
-        # Kiểm tra trùng
         so_phieu_moi = st.session_state.preview_data['Số WO']
         is_duplicate = (so_phieu_moi != "N/A" and not df.empty and so_phieu_moi in df['so_phieu'].values)
 
@@ -186,8 +221,8 @@ if menu == "📤 Import Báo Giá PDF":
                     'cvdv_name': cvdv_name,
                     'ghi_chu': "",
                     'httt': st.session_state.httt,
-                    'baohiem_da_duyet': "BẢO" in st.session_state.preview_data['Yêu cầu'].upper(),
-                    'ngay_gui_baogia_baohiem': datetime.now() if "BẢO" in st.session_state.preview_data['Yêu cầu'].upper() else None
+                    'baohiem_da_duyet': "Chưa duyệt" if "BẢO HIỂM" in st.session_state.preview_data['Yêu cầu'].upper() or st.session_state.httt == "I" else "",
+                    'ngay_gui_baogia_baohiem': datetime.now() if "BẢO HIỂM" in st.session_state.preview_data['Yêu cầu'].upper() or st.session_state.httt == "I" else None
                 }
 
                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
@@ -202,7 +237,7 @@ if menu == "📤 Import Báo Giá PDF":
                     del st.session_state.preview_data
                 st.rerun()
 
-# ====================== DANH SÁCH XE TỒN ======================
+# ====================== 2. DANH SÁCH XE ĐANG TỒN (CÓ CLICK MỞ MÀN HÌNH CHI TIẾT) ======================
 elif menu == "🚨 Danh sách Xe Đang Tồn":
     st.header("🚨 DANH SÁCH XE ĐANG TỒN")
     df_ton = df[df['is_xe_ton'] == True].copy()
@@ -222,61 +257,43 @@ elif menu == "🚨 Danh sách Xe Đang Tồn":
                 return ['background-color: #ffcccc'] * len(row)
             return [''] * len(row)
         
-        st.dataframe(
+        selected = st.dataframe(
             df_ton.style.apply(highlight, axis=1),
             column_order=['so_phieu', 'bien_so', 'ten_chu_xe', 'yeu_cau_kh',
                          'trang_thai', 'thoi_gian_ton_gio', 'cvdv_name'],
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row"
         )
+        
+        if selected["selection"]["rows"]:
+            idx = selected["selection"]["rows"][0]
+            row = df_ton.iloc[idx].to_dict()
+            show_detail_dialog(row)
+        
         st.warning(f"**Tổng số xe đang tồn: {len(df_ton)} xe**")
     else:
         st.success("✅ Hiện không có xe nào đang tồn.")
 
-# ====================== QUẢN LÝ TRẠNG THÁI ======================
-elif menu == "⚙️ Quản lý Trạng thái":
-    st.header("⚙️ Cập nhật Trạng thái Xe")
-    if df.empty:
-        st.info("Chưa có dữ liệu nào.")
-    else:
-        selected = st.selectbox("Chọn Số Phiếu để cập nhật", df['so_phieu'].unique())
-        row_idx = df[df['so_phieu'] == selected].index[0]
-        row = df.loc[row_idx]
-
-        col1, col2 = st.columns(2)
-        with col1:
-            new_trangthai = st.selectbox("Trạng thái", ["Báo Giá", "Lệnh Sửa Chữa (LSC)", "Hoàn Thành", "Hủy"])
-            is_ton = st.checkbox("Xe đang tồn", value=bool(row['is_xe_ton']))
-            if not is_ton:
-                ly_do = st.text_area("Lý do không tồn", value=row.get('ly_do_khong_ton', ""))
-        
-        with col2:
-            du_kien = st.date_input("Dự kiến hoàn thành",
-                value=row['thoi_gian_du_kien'] if pd.notna(row.get('thoi_gian_du_kien')) else datetime.now() + timedelta(days=2))
-            ghi_chu = st.text_area("Ghi chú", value=row.get('ghi_chu', ""))
-
-        if st.button("💾 Lưu thay đổi", type="primary"):
-            df.at[row_idx, 'trang_thai'] = new_trangthai
-            df.at[row_idx, 'is_xe_ton'] = is_ton
-            df.at[row_idx, 'ly_do_khong_ton'] = ly_do if 'ly_do' in locals() and not is_ton else ""
-            df.at[row_idx, 'thoi_gian_du_kien'] = pd.to_datetime(du_kien)
-            df.at[row_idx, 'ghi_chu'] = ghi_chu
-            df.at[row_idx, 'cvdv_name'] = cvdv_name
-
-            if new_trangthai == "Lệnh Sửa Chữa (LSC)" and pd.isna(df.at[row_idx, 'thoi_gian_bat_dau_lsc']):
-                df.at[row_idx, 'thoi_gian_bat_dau_lsc'] = datetime.now()
-
-            df.to_csv(DATA_FILE, index=False)
-            st.success("✅ Đã lưu thay đổi!")
-            st.rerun()
-
-# ====================== TẤT CẢ LỆNH ======================
+# ====================== 4. TẤT CẢ LỆNH ======================
 else:
     st.header("📋 TẤT CẢ LỆNH SỬA CHỮA")
     if df.empty:
         st.info("Chưa có dữ liệu nào.")
     else:
-        st.dataframe(df.sort_values('ngay_tao', ascending=False), use_container_width=True, hide_index=True)
+        selected = st.dataframe(
+            df.sort_values('ngay_tao', ascending=False),
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row"
+        )
+        
+        if selected["selection"]["rows"]:
+            idx = selected["selection"]["rows"][0]
+            row = df.iloc[idx].to_dict()
+            show_detail_dialog(row)
 
 # Auto save
 if not df.empty:
