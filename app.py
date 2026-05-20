@@ -322,30 +322,65 @@ if menu == "📤 Import Báo Giá PDF":
                     del st.session_state.preview_data
                 st.rerun()
 
-# ====================== DANH SÁCH XE ĐANG TỒN ======================
+# ====================== 2. DANH SÁCH XE ĐANG TỒN ======================
 elif menu == "🚨 Danh sách Xe Đang Tồn":
     st.header("🚨 DANH SÁCH XE ĐANG TỒN")
     df_ton = df[df['is_xe_ton'] == True].copy()
     
     if not df_ton.empty:
-        df_ton['thoi_gian_ton_gio'] = 0.0
-        mask = df_ton['thoi_gian_bat_dau_lsc'].notna()
-        if mask.any():
-            df_ton.loc[mask, 'thoi_gian_ton_gio'] = (
-                (datetime.now() - df_ton.loc[mask, 'thoi_gian_bat_dau_lsc']).dt.total_seconds() / 3600
-            ).round(2)
+        # Khởi tạo cột hiển thị
+        df_ton['thoi_gian_ton_display'] = "00:00:00"
+        df_ton['thoi_gian_ton_gio'] = 0.0   # dùng để sort + highlight >24h
+
+        # === XE ĐANG HOẠT ĐỘNG (Báo Giá / Lệnh Sửa Chữa) ===
+        active_mask = df_ton['trang_thai'].isin(["Báo Giá", "Lệnh Sửa Chữa"])
         
+        if active_mask.any():
+            for idx in df_ton[active_mask].index:
+                try:
+                    start = pd.to_datetime(df_ton.loc[idx, 'thoi_gian_bat_dau_lsc'])
+                    seconds = int((datetime.now() - start).total_seconds())
+                    
+                    # Tính giờ:phút:giây
+                    h = seconds // 3600
+                    m = (seconds % 3600) // 60
+                    s = seconds % 60
+                    df_ton.loc[idx, 'thoi_gian_ton_display'] = f"{h:02d}:{m:02d}:{s:02d}"
+                    
+                    # Giữ giá trị float để sort và highlight
+                    df_ton.loc[idx, 'thoi_gian_ton_gio'] = round(seconds / 3600, 2)
+                except:
+                    pass
+
+        # === XE ĐÃ HOÀN THÀNH / HỦY (dùng giá trị đã đóng băng) ===
+        completed_mask = df_ton['trang_thai'].isin(["Hoàn Thành", "Hủy"]) & df_ton['thoi_gian_ton_seconds'].notna()
+        
+        if completed_mask.any():
+            for idx in df_ton[completed_mask].index:
+                try:
+                    seconds = int(df_ton.loc[idx, 'thoi_gian_ton_seconds'])
+                    h = seconds // 3600
+                    m = (seconds % 3600) // 60
+                    s = seconds % 60
+                    df_ton.loc[idx, 'thoi_gian_ton_display'] = f"{h:02d}:{m:02d}:{s:02d}"
+                    df_ton.loc[idx, 'thoi_gian_ton_gio'] = round(seconds / 3600, 2)
+                except:
+                    pass
+
+        # Sắp xếp theo thời gian tồn (giờ)
         df_ton = df_ton.sort_values('thoi_gian_ton_gio', ascending=False)
         
+        # Hàm tô màu nếu > 24 giờ
         def highlight(row):
             if row['thoi_gian_ton_gio'] > 24:
                 return ['background-color: #ffcccc'] * len(row)
             return [''] * len(row)
         
+        # Hiển thị bảng
         selected = st.dataframe(
             df_ton.style.apply(highlight, axis=1),
             column_order=['so_phieu', 'bien_so', 'ten_chu_xe', 'yeu_cau_kh',
-                         'trang_thai', 'thoi_gian_ton_gio', 'cvdv_name'],
+                         'trang_thai', 'thoi_gian_ton_display', 'cvdv_name'],
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
@@ -360,7 +395,7 @@ elif menu == "🚨 Danh sách Xe Đang Tồn":
         st.warning(f"**Tổng số xe đang tồn: {len(df_ton)} xe**")
     else:
         st.success("✅ Hiện không có xe nào đang tồn.")
-
+        
 # ====================== TẤT CẢ LỆNH ======================
 else:
     st.header("📋 TẤT CẢ LỆNH SỬA CHỮA")
