@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from datetime import datetime
+import math
 import streamlit as st
 import pandas as pd
 import os
@@ -9,27 +10,69 @@ import re
 def show_detail_dialog(row):
     st.subheader(f"Chi tiết - {row.get('so_phieu', 'N/A')}")
     
+    # ====================== THÔNG TIN CƠ BẢN ======================
     col1, col2 = st.columns(2)
     with col1:
         st.write(f"**Biển số:** {row.get('bien_so', 'N/A')}")
         st.write(f"**Tên chủ xe:** {row.get('ten_chu_xe', 'N/A')}")
-        st.write(f"**Yêu cầu KH:** {row.get('yeu_cau_kh', 'N/A')}")
+        st.write(f"**SĐT chủ xe:** {row.get('sdt', 'N/A')}")
         st.write(f"**Người mang xe đến:** {row.get('nguoi_mang_xe', 'N/A')}")
+        st.write(f"**SĐT người mang xe đến:** {row.get('sdt_nguoi_mang', 'N/A')}")
+    
     with col2:
         st.write(f"**Trạng thái:** {row.get('trang_thai', 'N/A')}")
         st.write(f"**CVDV:** {row.get('cvdv_name', 'N/A')}")
+        st.write(f"**Yêu cầu KH:** {row.get('yeu_cau_kh', 'N/A')}")
+        st.write(f"**Mã kiểu xe:** {row.get('ma_kieu_xe', 'N/A')}")
+        st.write(f"**Số khung:** {row.get('so_khung', 'N/A')}")
+
+    st.divider()
+
+    # ====================== TRẠNG THÁI TỒN / KHÔNG TỒN ======================
+    def tonornot():
+        is_ton = row.get('is_xe_ton', True)
+        if is_ton:
+            return "tồn"
+        return "không tồn"
+
+    ly_do = row.get('ly_do_khong_ton', '')
+    if pd.notna(ly_do):
+        st.warning(f"**Xe đang {tonornot()}**")
+        st.write(f"**Lý do {tonornot()}:** {ly_do}")
+    else:
+        st.warning(f"**Xe đang {tonornot()}**")
+        st.write(f"**Lý do {tonornot()}:** Không có ghi chú")
+
+    # ====================== THỜI GIAN DỰ KIẾN ======================
+    if pd.notna(row.get('thoi_gian_du_kien')):
+        st.write(f"**Thời gian hoàn thành dự kiến:** {row.get('thoi_gian_du_kien')}")
+
+    # ====================== THÔNG TIN BẢO HIỂM ======================
+    if pd.notna(row.get('baohiem_da_duyet')):
+        st.divider()
+        st.write("**Thông tin bảo hiểm**")
         
-        # Hiển thị thời gian tồn đẹp
-        if row.get('trang_thai') in ["Hoàn Thành", "Hủy"] and 'thoi_gian_ton_seconds' in row and pd.notna(row.get('thoi_gian_ton_seconds')):
-            seconds = int(row['thoi_gian_ton_seconds'])
-            hours = seconds // 3600
-            minutes = (seconds % 3600) // 60
-            secs = seconds % 60
-            st.write(f"**Thời gian tồn:** {hours:02d}:{minutes:02d}:{secs:02d}")
-        elif 'thoi_gian_ton_gio' in row and pd.notna(row.get('thoi_gian_ton_gio')):
-            st.write(f"**Thời gian tồn:** {row['thoi_gian_ton_gio']:.2f} giờ")
+        if row.get('baohiem_da_duyet') == "Chưa duyệt":
+            st.write("**Bảo hiểm duyệt chưa:** ❌ Chưa duyệt")
         else:
-            st.write("**Thời gian tồn:** Đang tính...")
+            st.write("**Bảo hiểm duyệt chưa:** ✅ Đã duyệt")
+        
+        if row.get('ngay_gui_baogia_baohiem'):
+            st.write(f"**Ngày gửi báo giá bảo hiểm:** {row.get('ngay_gui_baogia_baohiem')}")
+
+    st.divider()
+
+    # ====================== THỜI GIAN TỒN (HIỂN THỊ) ======================
+    if row.get('trang_thai') in ["Hoàn Thành", "Hủy"] and 'thoi_gian_ton_seconds' in row and pd.notna(row.get('thoi_gian_ton_seconds')):
+        seconds = int(row['thoi_gian_ton_seconds'])
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        st.write(f"**Thời gian tồn:** {h:02d}:{m:02d}:{s:02d}")
+    elif 'thoi_gian_ton_gio' in row and pd.notna(row.get('thoi_gian_ton_gio')):
+        st.write(f"**Thời gian tồn:** {row['thoi_gian_ton_gio']:.2f} giờ")
+    else:
+        st.write("**Thời gian tồn:** Đang tính...")
 
     st.divider()
 
@@ -68,31 +111,25 @@ def show_detail_dialog(row):
     if st.button("💾 Lưu thay đổi", type="primary"):
         mask = df['so_phieu'] == row['so_phieu']
         if mask.any():
-            # Xử lý đặc biệt phiếu hệ "E"
             if "E" in str(df.loc[mask, 'so_phieu'].values[0]) and new_trangthai == "Lệnh Sửa Chữa":
                 st.session_state.show_new_so_phieu_input = True
                 st.session_state.pending_mask = mask
                 st.session_state.pending_trangthai = new_trangthai
                 st.rerun()
             else:
-                # === CẬP NHẬT TRẠNG THÁI ===
                 df.loc[mask, 'trang_thai'] = new_trangthai
 
-                # === XỬ LÝ THỜI GIAN TỒN ===
                 if new_trangthai in ["Hoàn Thành", "Hủy"]:
-                    # Dừng đồng hồ và lưu thời gian tồn chính xác
                     if pd.notna(row.get('thoi_gian_bat_dau_lsc')):
                         start_time = pd.to_datetime(row['thoi_gian_bat_dau_lsc'])
                         duration = datetime.now() - start_time
                         total_seconds = int(duration.total_seconds())
                         df.loc[mask, 'thoi_gian_ton_seconds'] = total_seconds
                 elif new_trangthai == "Báo Giá" and role == "admin":
-                    # Admin reset đồng hồ khi chuyển về Báo Giá
                     df.loc[mask, 'thoi_gian_bat_dau_lsc'] = None
                     if 'thoi_gian_ton_seconds' in df.columns:
                         df.loc[mask, 'thoi_gian_ton_seconds'] = None
 
-                # Cập nhật thời gian bắt đầu LSC nếu cần
                 if new_trangthai == "Lệnh Sửa Chữa" and pd.isna(row.get('thoi_gian_bat_dau_lsc')):
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     df.loc[mask, 'thoi_gian_bat_dau_lsc'] = now_str
@@ -140,6 +177,7 @@ if 'logged_in' not in st.session_state:
 USERS = {
     "quyennv": {"password": "123", "display_name": "Nguyễn Văn Quyền", "role": "cvdv"},
     "sonnt": {"password": "123", "display_name": "Nguyễn Trịnh Sơn", "role": "cvdv"},
+    "ngocbt": {"password": "123", "display_name": "Bùi Tuấn Ngọc", "role": "cvdv"},
     "pvgkhanh": {"password": "1234Ac12@", "display_name": "Phạm Viết Gia Khánh", "role": "admin"},
     "quyenttk": {"password": "090524@quyen", "display_name": "Trần Thị Kim Quyên", "role": "manager"},
 }
@@ -195,6 +233,10 @@ else:
         'baohiem_da_duyet', 'ngay_gui_baogia_baohiem', 'so_ngay_nhap_tre'
     ])
 
+# ====================== KHỞI TẠO CỘT MỚI (QUAN TRỌNG) ======================
+if 'thoi_gian_ton_seconds' not in df.columns:
+    df['thoi_gian_ton_seconds'] = None
+
 # ====================== SIDEBAR MENU ======================
 menu_options = ["📤 Import Báo Giá PDF", "🚨 Danh sách Xe Đang Tồn", "📋 Tất cả Lệnh Sửa Chữa"]
 
@@ -205,7 +247,7 @@ menu = st.sidebar.radio("Chọn chức năng", menu_options, index=0, horizontal
 
 cvdv_name = st.session_state.display_name
 
-# ====================== 1. IMPORT PDF (GIỮ NGUYÊN + KIỂM TRA TRÙNG) ======================
+# ====================== 1. IMPORT PDF ======================
 if menu == "📤 Import Báo Giá PDF":
     st.header("📤 Import Báo Giá từ PDF")
 
@@ -328,33 +370,28 @@ elif menu == "🚨 Danh sách Xe Đang Tồn":
     df_ton = df[df['is_xe_ton'] == True].copy()
     
     if not df_ton.empty:
-        # Khởi tạo cột hiển thị
+        # Khởi tạo cột
         df_ton['thoi_gian_ton_display'] = "00:00:00"
-        df_ton['thoi_gian_ton_gio'] = 0.0   # dùng để sort + highlight >24h
+        df_ton['thoi_gian_ton_gio'] = 0.0
 
-        # === XE ĐANG HOẠT ĐỘNG (Báo Giá / Lệnh Sửa Chữa) ===
+        # === XE ĐANG HOẠT ĐỘNG ===
         active_mask = df_ton['trang_thai'].isin(["Báo Giá", "Lệnh Sửa Chữa"])
-        
         if active_mask.any():
             for idx in df_ton[active_mask].index:
                 try:
                     start = pd.to_datetime(df_ton.loc[idx, 'thoi_gian_bat_dau_lsc'])
                     seconds = int((datetime.now() - start).total_seconds())
                     
-                    # Tính giờ:phút:giây
                     h = seconds // 3600
                     m = (seconds % 3600) // 60
                     s = seconds % 60
                     df_ton.loc[idx, 'thoi_gian_ton_display'] = f"{h:02d}:{m:02d}:{s:02d}"
-                    
-                    # Giữ giá trị float để sort và highlight
                     df_ton.loc[idx, 'thoi_gian_ton_gio'] = round(seconds / 3600, 2)
                 except:
                     pass
 
-        # === XE ĐÃ HOÀN THÀNH / HỦY (dùng giá trị đã đóng băng) ===
+        # === XE ĐÃ HOÀN THÀNH / HỦY ===
         completed_mask = df_ton['trang_thai'].isin(["Hoàn Thành", "Hủy"]) & df_ton['thoi_gian_ton_seconds'].notna()
-        
         if completed_mask.any():
             for idx in df_ton[completed_mask].index:
                 try:
@@ -367,31 +404,47 @@ elif menu == "🚨 Danh sách Xe Đang Tồn":
                 except:
                     pass
 
-        # Sắp xếp theo thời gian tồn (giờ)
         df_ton = df_ton.sort_values('thoi_gian_ton_gio', ascending=False)
-        
-        # Hàm tô màu nếu > 24 giờ
+
+        # ====================== TẠO DATAFRAME HIỂN THỊ ======================
+        df_display = df_ton[['so_phieu', 'bien_so', 'ten_chu_xe', 'yeu_cau_kh',
+                             'trang_thai', 'thoi_gian_ton_display', 'cvdv_name', 
+                             'thoi_gian_ton_gio']].copy()   # ← Giữ lại thoi_gian_ton_gio
+
+        # Đổi tên cột
+        df_display.columns = [
+            'Số phiếu', 
+            'Biển số', 
+            'Tên chủ xe', 
+            'Yêu cầu KH', 
+            'Trạng thái', 
+            'Thời gian tồn (giờ:phút:giây)', 
+            'CVDV',
+            'thoi_gian_ton_gio'   # Giữ tên gốc để highlight dùng được
+        ]
+
+        # Hàm tô màu
         def highlight(row):
             if row['thoi_gian_ton_gio'] > 24:
                 return ['background-color: #ffcccc'] * len(row)
             return [''] * len(row)
-        
-        # Hiển thị bảng
+
+        # ====================== HIỂN THỊ BẢNG ======================
         selected = st.dataframe(
-            df_ton.style.apply(highlight, axis=1),
-            column_order=['so_phieu', 'bien_so', 'ten_chu_xe', 'yeu_cau_kh',
-                         'trang_thai', 'thoi_gian_ton_display', 'cvdv_name'],
+            df_display.style.apply(highlight, axis=1),
+            column_order=['Số phiếu', 'Biển số', 'Tên chủ xe', 'Yêu cầu KH',
+                         'Trạng thái', 'Thời gian tồn (giờ:phút:giây)', 'CVDV'],
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row"
         )
-        
+
         if selected["selection"]["rows"]:
             idx = selected["selection"]["rows"][0]
             row = df_ton.iloc[idx].to_dict()
             show_detail_dialog(row)
-        
+
         st.warning(f"**Tổng số xe đang tồn: {len(df_ton)} xe**")
     else:
         st.success("✅ Hiện không có xe nào đang tồn.")
