@@ -4,7 +4,7 @@ import pandas as pd
 import os
 import re
 
-# ====================== HÀM MÀN HÌNH CHI TIẾT (ĐẶT Ở ĐÂY - TRÊN CÙNG) ======================
+# ====================== HÀM MÀN HÌNH CHI TIẾT ======================
 @st.dialog("📋 Chi tiết", width="large")
 def show_detail_dialog(row):
     st.subheader(f"Chi tiết - {row.get('so_phieu', 'N/A')}")
@@ -18,53 +18,92 @@ def show_detail_dialog(row):
     with col2:
         st.write(f"**Trạng thái:** {row.get('trang_thai', 'N/A')}")
         st.write(f"**CVDV:** {row.get('cvdv_name', 'N/A')}")
-        if 'thoi_gian_ton_gio' in row:
-            st.write(f"**Thời gian tồn:** {row['thoi_gian_ton_gio']:.1f} giờ")
-        st.write(f"**Ngày tạo:** {str(row.get('ngay_tao', 'N/A'))[:10]}")
-    
+        
+        # Hiển thị thời gian tồn đẹp
+        if row.get('trang_thai') in ["Hoàn Thành", "Hủy"] and 'thoi_gian_ton_seconds' in row and pd.notna(row.get('thoi_gian_ton_seconds')):
+            seconds = int(row['thoi_gian_ton_seconds'])
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            secs = seconds % 60
+            st.write(f"**Thời gian tồn:** {hours:02d}:{minutes:02d}:{secs:02d}")
+        elif 'thoi_gian_ton_gio' in row and pd.notna(row.get('thoi_gian_ton_gio')):
+            st.write(f"**Thời gian tồn:** {row['thoi_gian_ton_gio']:.2f} giờ")
+        else:
+            st.write("**Thời gian tồn:** Đang tính...")
+
     st.divider()
 
-    st.write("**Điều khiển **")
-    new_trangthai = st.selectbox(
-        "Trạng thái mới", 
-        ["Báo Giá", "Lệnh Sửa Chữa", "Hoàn Thành", "Hủy"], 
-        index=["Báo Giá", "Lệnh Sửa Chữa", "Hoàn Thành", "Hủy"].index(row.get('trang_thai', 'Báo Giá'))
-    )
+    current_status = row.get('trang_thai', 'Báo Giá')
+    role = st.session_state.role
 
-    # 1. Khởi tạo các biến trạng thái nếu chưa có
-    if 'show_new_so_phieu_input' not in st.session_state:
-        st.session_state.show_new_so_phieu_input = False
-    if 'pending_mask' not in st.session_state:
-        st.session_state.pending_mask = None
-    if 'pending_trangthai' not in st.session_state:
-        st.session_state.pending_trangthai = None
-    print(df["thoi_gian_bat_dau_lsc"])
-    # 2. Xử lý khi bấm nút "Lưu thay đổi" ban đầu
-    if st.button("💾 Lưu thay đổi"):
+    # ====================== KIỂM TRA QUYỀN ======================
+    if current_status in ["Hoàn Thành", "Hủy"] and role != "admin":
+        st.info("⚠️ Trạng thái này đã hoàn thành hoặc hủy. Không thể chỉnh sửa.")
+        return
+
+    if role == "manager":
+        st.info("Bạn chỉ có quyền xem, không thể chỉnh sửa trạng thái.")
+        return
+
+    # ====================== HIỂN THỊ FORM CHỈNH SỬA ======================
+    st.write("**Chỉnh sửa trạng thái**")
+
+    if role == "cvdv":
+        if current_status == "Báo Giá":
+            allowed_status = ["Lệnh Sửa Chữa", "Hủy"]
+        elif current_status == "Lệnh Sửa Chữa":
+            allowed_status = ["Hoàn Thành", "Hủy"]
+        else:
+            allowed_status = []
+    else:  # admin
+        allowed_status = ["Báo Giá", "Lệnh Sửa Chữa", "Hoàn Thành", "Hủy"]
+
+    if not allowed_status:
+        st.info("Không thể chỉnh sửa trạng thái này.")
+        return
+
+    new_trangthai = st.selectbox("Trạng thái mới", allowed_status, index=0)
+
+    # ====================== NÚT LƯU ======================
+    if st.button("💾 Lưu thay đổi", type="primary"):
         mask = df['so_phieu'] == row['so_phieu']
         if mask.any():
-            # Kiểm tra điều kiện có chữ "E" và trạng thái là "Lệnh Sửa Chữa"
-            if "E" in df.loc[mask, 'so_phieu'].values[0] and new_trangthai == "Lệnh Sửa Chữa":
-                # Bật cờ hiển thị form nhập số phiếu mới và lưu lại thông tin tạm thời
+            # Xử lý đặc biệt phiếu hệ "E"
+            if "E" in str(df.loc[mask, 'so_phieu'].values[0]) and new_trangthai == "Lệnh Sửa Chữa":
                 st.session_state.show_new_so_phieu_input = True
                 st.session_state.pending_mask = mask
                 st.session_state.pending_trangthai = new_trangthai
-                st.rerun() # Chạy lại để hiển thị form nhập liệu ngay lập tức
+                st.rerun()
             else:
-                # Trường hợp bình thường: Cập nhật luôn không cần đổi số phiếu
+                # === CẬP NHẬT TRẠNG THÁI ===
                 df.loc[mask, 'trang_thai'] = new_trangthai
-                if new_trangthai == "Lệnh Sửa Chữa":
+
+                # === XỬ LÝ THỜI GIAN TỒN ===
+                if new_trangthai in ["Hoàn Thành", "Hủy"]:
+                    # Dừng đồng hồ và lưu thời gian tồn chính xác
+                    if pd.notna(row.get('thoi_gian_bat_dau_lsc')):
+                        start_time = pd.to_datetime(row['thoi_gian_bat_dau_lsc'])
+                        duration = datetime.now() - start_time
+                        total_seconds = int(duration.total_seconds())
+                        df.loc[mask, 'thoi_gian_ton_seconds'] = total_seconds
+                elif new_trangthai == "Báo Giá" and role == "admin":
+                    # Admin reset đồng hồ khi chuyển về Báo Giá
+                    df.loc[mask, 'thoi_gian_bat_dau_lsc'] = None
+                    if 'thoi_gian_ton_seconds' in df.columns:
+                        df.loc[mask, 'thoi_gian_ton_seconds'] = None
+
+                # Cập nhật thời gian bắt đầu LSC nếu cần
+                if new_trangthai == "Lệnh Sửa Chữa" and pd.isna(row.get('thoi_gian_bat_dau_lsc')):
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     df.loc[mask, 'thoi_gian_bat_dau_lsc'] = now_str
+
                 df.to_csv(DATA_FILE, index=False)
                 st.success("✅ Đã cập nhật trạng thái!")
                 st.rerun()
 
-    # 3. Hiển thị "Hộp thoại" (Form) nhập số phiếu mới nếu cờ được bật
-    if st.session_state.show_new_so_phieu_input:
+    # ====================== FORM ĐỔI SỐ PHIẾU (cho phiếu E) ======================
+    if st.session_state.get('show_new_so_phieu_input', False):
         st.warning("⚠️ Phát hiện phiếu hệ 'E'. Vui lòng cập nhật số phiếu mới cho Lệnh Sửa Chữa.")
-        
-        # Tạo một form nhỏ để người dùng nhập số phiếu mới
         with st.form(key="change_so_phieu_form"):
             new_so_phieu = st.text_input("Nhập số phiếu mới:", value=row['so_phieu'])
             submit_new_phieu = st.form_submit_button("Xác nhận đổi số phiếu & Lưu")
@@ -73,31 +112,23 @@ def show_detail_dialog(row):
                 if new_so_phieu.strip() == "":
                     st.error("Không được để trống số phiếu mới!")
                 else:
-                    # Lấy lại thông tin mask và trạng thái đã lưu tạm trước đó
                     active_mask = st.session_state.pending_mask
                     active_trangthai = st.session_state.pending_trangthai
                     
-                    # Cập nhật CẢ số phiếu mới VÀ trạng thái mới
                     df.loc[active_mask, 'so_phieu'] = new_so_phieu
                     df.loc[active_mask, 'trang_thai'] = active_trangthai
-
+                    
                     if active_trangthai == "Lệnh Sửa Chữa":
                         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         df.loc[active_mask, 'thoi_gian_bat_dau_lsc'] = now_str
                     
-                    # Lưu vào file CSV
                     df.to_csv(DATA_FILE, index=False)
                     
-                    # Reset lại trạng thái cờ về ban đầu
                     st.session_state.show_new_so_phieu_input = False
                     st.session_state.pending_mask = None
                     st.session_state.pending_trangthai = None
-                    
                     st.success("✅ Đã đổi số phiếu và cập nhật trạng thái!")
                     st.rerun()
-    
-    # if st.session_state.role in ["admin", "manager"]:
-        
 
 # ====================== ĐĂNG NHẬP ======================
 if 'logged_in' not in st.session_state:
@@ -164,19 +195,13 @@ else:
         'baohiem_da_duyet', 'ngay_gui_baogia_baohiem', 'so_ngay_nhap_tre'
     ])
 
-# ====================== SIDEBAR MENU - PHÂN QUYỀN ======================
-menu_options = ["🚨 Danh sách Xe Đang Tồn", "📋 Tất cả Lệnh Sửa Chữa"]
+# ====================== SIDEBAR MENU ======================
+menu_options = ["📤 Import Báo Giá PDF", "🚨 Danh sách Xe Đang Tồn", "📋 Tất cả Lệnh Sửa Chữa"]
 
 if st.session_state.role in ["cvdv", "admin"]:
-    menu_options = ["📤 Import Báo Giá PDF", "🚨 Danh sách Xe Đang Tồn", 
-                   "📋 Tất cả Lệnh Sửa Chữa"]
+    menu_options = ["📤 Import Báo Giá PDF", "🚨 Danh sách Xe Đang Tồn", "📋 Tất cả Lệnh Sửa Chữa"]
 
-menu = st.sidebar.radio(
-    "Chọn chức năng",
-    menu_options,
-    index=0,                    # Mặc định chọn mục đầu tiên
-    horizontal=False            # Hiển thị dạng dọc (cố định, đẹp)
-)
+menu = st.sidebar.radio("Chọn chức năng", menu_options, index=0, horizontal=False)
 
 cvdv_name = st.session_state.display_name
 
@@ -297,7 +322,7 @@ if menu == "📤 Import Báo Giá PDF":
                     del st.session_state.preview_data
                 st.rerun()
 
-# ====================== 2. DANH SÁCH XE ĐANG TỒN (CÓ CLICK MỞ MÀN HÌNH CHI TIẾT) ======================
+# ====================== DANH SÁCH XE ĐANG TỒN ======================
 elif menu == "🚨 Danh sách Xe Đang Tồn":
     st.header("🚨 DANH SÁCH XE ĐANG TỒN")
     df_ton = df[df['is_xe_ton'] == True].copy()
@@ -336,7 +361,7 @@ elif menu == "🚨 Danh sách Xe Đang Tồn":
     else:
         st.success("✅ Hiện không có xe nào đang tồn.")
 
-# ====================== 4. TẤT CẢ LỆNH ======================
+# ====================== TẤT CẢ LỆNH ======================
 else:
     st.header("📋 TẤT CẢ LỆNH SỬA CHỮA")
     if df.empty:
