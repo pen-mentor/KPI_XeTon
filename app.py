@@ -379,7 +379,7 @@ if 'thoi_gian_ton_seconds' not in df.columns:
     df['thoi_gian_ton_seconds'] = None
 
 # ====================== SIDEBAR MENU ======================
-menu_options = ["📤 Import Báo Giá PDF", "🚨 Danh sách Xe Đang Tồn", "📋 Tất cả Lệnh Sửa Chữa"]
+menu_options = ["🚨 Danh sách Xe Đang Tồn", "📋 Tất cả Lệnh Sửa Chữa"]
 
 if st.session_state.role in ["cvdv", "admin"]:
     menu_options = ["📤 Import Báo Giá PDF", "🚨 Danh sách Xe Đang Tồn", "📋 Tất cả Lệnh Sửa Chữa"]
