@@ -1,5 +1,4 @@
-from datetime import datetime
-import math
+from datetime import datetime, timedelta
 import streamlit as st
 import pandas as pd
 import os
@@ -9,6 +8,10 @@ import re
 @st.dialog("📋 Chi tiết", width="large")
 def show_detail_dialog(row):
     st.subheader(f"Chi tiết - {row.get('so_phieu', 'N/A')}")
+
+    # Khởi tạo edit_mode nếu chưa có
+    if 'edit_mode' not in st.session_state:
+        st.session_state.edit_mode = False
     
     # ====================== THÔNG TIN CƠ BẢN ======================
     col1, col2 = st.columns(2)
@@ -29,38 +32,96 @@ def show_detail_dialog(row):
     st.divider()
 
     # ====================== TRẠNG THÁI TỒN / KHÔNG TỒN ======================
-    def tonornot():
+    st.subheader("Thông tin xe tồn")
+
+    if not st.session_state.edit_mode:
+        # Chế độ xem
         is_ton = row.get('is_xe_ton', True)
+        ly_do = row.get('ly_do_khong_ton', '')
+
         if is_ton:
-            return "tồn"
-        return "không tồn"
-
-    ly_do = row.get('ly_do_khong_ton', '')
-    if pd.notna(ly_do):
-        st.warning(f"**Xe đang {tonornot()}**")
-        st.write(f"**Lý do {tonornot()}:** {ly_do}")
-    else:
-        st.warning(f"**Xe đang {tonornot()}**")
-        st.write(f"**Lý do {tonornot()}:** Không có ghi chú")
-
-    # ====================== THỜI GIAN DỰ KIẾN ======================
-    if pd.notna(row.get('thoi_gian_du_kien')):
-        st.write(f"**Thời gian hoàn thành dự kiến:** {row.get('thoi_gian_du_kien')}")
-
-    # ====================== THÔNG TIN BẢO HIỂM ======================
-    if pd.notna(row.get('baohiem_da_duyet')):
-        st.divider()
-        st.write("**Thông tin bảo hiểm**")
-        
-        if row.get('baohiem_da_duyet') == "Chưa duyệt":
-            st.write("**Bảo hiểm duyệt chưa:** ❌ Chưa duyệt")
+            st.error("🚨 Xe đang tồn")
+            st.write(f"**Lý do tồn:** {ly_do if pd.notna(ly_do) else 'Chưa có lý do'}")
         else:
-            st.write("**Bảo hiểm duyệt chưa:** ✅ Đã duyệt")
-        
-        if row.get('ngay_gui_baogia_baohiem'):
-            st.write(f"**Ngày gửi báo giá bảo hiểm:** {row.get('ngay_gui_baogia_baohiem')}")
+            st.success("✅ Xe không tồn")
+            st.write(f"**Lý do không tồn:** {ly_do if pd.notna(ly_do) else 'Chưa có lý do'}")
 
-    st.divider()
+        if st.session_state.role in ["admin", "cvdv"]:
+            if st.button("✏️ Cập nhật thông tin", type="primary", key="btn_edit_mode"):
+                st.session_state.edit_mode = True
+                st.rerun()
+
+    else:
+        # Chế độ chỉnh sửa
+        is_ton = st.toggle("Xe đang tồn", value=row.get('is_xe_ton', True), key="toggle_ton")
+
+        if is_ton:
+            options = ["Thiếu phụ tùng", "Thiếu nhân sự", "SC động cơ", "SC PIN", "Khác"]
+        else:
+            options = ["Lỗi DMS", "Đã cho KH mượn PIN", "Đã cho KH mượn xe", "KH đã đem xe về", "Khác"]
+
+        ly_do = st.selectbox("Lý do", options=options, key="select_lydo")
+
+        if ly_do == "Khác":
+            ly_do = st.text_input("Nhập lý do khác:", placeholder="Nhập chi tiết...", key="text_lydo")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 Lưu thay đổi", type="primary", key="btn_save_status"):
+                if not ly_do or ly_do.strip() == "" or ly_do == "Khác":
+                    st.error("❌ Vui lòng chọn hoặc nhập lý do!")
+                else:
+                    mask = df['so_phieu'] == row['so_phieu']
+                    if mask.any():
+                        df.loc[mask, 'is_xe_ton'] = is_ton
+                        df.loc[mask, 'ly_do_khong_ton'] = ly_do.strip()
+                        df.to_csv(DATA_FILE, index=False)
+                        st.success("✅ Đã lưu thay đổi!")
+                        st.session_state.edit_mode = False
+                        st.rerun()
+
+        with col2:
+            if st.button("❌ Hủy", type="secondary", key="btn_cancel_edit"):
+                st.session_state.edit_mode = False
+                st.rerun()
+
+    if st.session_state.role in ["admin", "cvdv"]:
+        st.divider()
+
+    # ====================== THỜI GIAN HOÀN THÀNH DỰ KIẾN ======================
+    current_du_kien = row.get('thoi_gian_du_kien')
+    today = datetime.now().date()
+
+    if pd.notna(current_du_kien):
+        default_date = pd.to_datetime(current_du_kien).date()
+        # Nếu ngày cũ nhỏ hơn hôm nay thì dùng hôm nay
+        if default_date < today:
+            default_date = today
+    else:
+        default_date = today + timedelta(days=3)
+
+    if st.session_state.role in ["admin", "cvdv"]:
+        # Admin và CVDV được chỉnh sửa, nhưng không được chọn ngày quá khứ
+        new_du_kien = st.date_input(
+            "**Chọn ngày hoàn thành dự kiến**",
+            value=default_date,
+            min_value=today,                    # ← Không cho chọn ngày trước hôm nay
+            key="date_du_kien"
+        )
+        
+        if st.button("💾 Lưu ngày dự kiến", type="primary", key="save_du_kien"):
+            mask = df['so_phieu'] == row['so_phieu']
+            if mask.any():
+                df.loc[mask, 'thoi_gian_du_kien'] = pd.to_datetime(new_du_kien)
+                df.to_csv(DATA_FILE, index=False)
+                st.success("✅ Đã cập nhật thời gian dự kiến!")
+                st.rerun()
+    else:
+        # Manager chỉ xem
+        if pd.notna(current_du_kien):
+            st.write(f"**Ngày dự kiến hoàn thành:** {pd.to_datetime(current_du_kien).strftime('%d/%m/%Y')}")
+        else:
+            st.write("**Ngày dự kiến hoàn thành:** Chưa có")
 
     # ====================== THỜI GIAN TỒN (HIỂN THỊ) ======================
     if row.get('trang_thai') in ["Hoàn Thành", "Hủy"] and 'thoi_gian_ton_seconds' in row and pd.notna(row.get('thoi_gian_ton_seconds')):
@@ -74,18 +135,30 @@ def show_detail_dialog(row):
     else:
         st.write("**Thời gian tồn:** Đang tính...")
 
-    st.divider()
-
     current_status = row.get('trang_thai', 'Báo Giá')
     role = st.session_state.role
 
+    # ====================== THÔNG TIN BẢO HIỂM ======================
+    if pd.notna(row.get('baohiem_da_duyet')):
+        st.divider()
+        st.subheader("Thông tin bảo hiểm")
+        
+        if row.get('baohiem_da_duyet') == "Chưa duyệt":
+            st.write("❌**Bảo hiểm chưa duyệt**")
+        else:
+            st.write("✅**Bảo hiểm đã duyệt**")
+        
+        if row.get('ngay_gui_baogia_baohiem'):
+            st.write(f"**Ngày gửi báo giá bảo hiểm:** {pd.to_datetime(row.get('ngay_gui_baogia_baohiem')).strftime('%d/%m/%Y')}")
+
+    st.divider()
+
     # ====================== KIỂM TRA QUYỀN ======================
-    if current_status in ["Hoàn Thành", "Hủy"] and role != "admin":
-        st.info("⚠️ Trạng thái này đã hoàn thành hoặc hủy. Không thể chỉnh sửa.")
+    if current_status in ["Hoàn Thành", "Hủy"] and role not in ["admin", "manager"]:
+        st.info(f"⚠️ Trạng thái đã {current_status.lower()}. Không thể chỉnh sửa.")
         return
 
     if role == "manager":
-        st.info("Bạn chỉ có quyền xem, không thể chỉnh sửa trạng thái.")
         return
 
     # ====================== HIỂN THỊ FORM CHỈNH SỬA ======================
@@ -120,11 +193,16 @@ def show_detail_dialog(row):
                 df.loc[mask, 'trang_thai'] = new_trangthai
 
                 if new_trangthai in ["Hoàn Thành", "Hủy"]:
+                    df.loc[mask, 'is_xe_ton'] = False
                     if pd.notna(row.get('thoi_gian_bat_dau_lsc')):
                         start_time = pd.to_datetime(row['thoi_gian_bat_dau_lsc'])
                         duration = datetime.now() - start_time
                         total_seconds = int(duration.total_seconds())
                         df.loc[mask, 'thoi_gian_ton_seconds'] = total_seconds
+                    if new_trangthai == "Hoàn Thành":
+                        df.loc[mask, 'ly_do_khong_ton'] = "Hoàn Thành"
+                    elif new_trangthai == "Hủy":
+                        df.loc[mask, 'ly_do_khong_ton'] = "KH đổi/ hủy lịch"
                 elif new_trangthai == "Báo Giá" and role == "admin":
                     df.loc[mask, 'thoi_gian_bat_dau_lsc'] = None
                     if 'thoi_gian_ton_seconds' in df.columns:
@@ -225,6 +303,7 @@ if os.path.exists(DATA_FILE):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors='coerce')
 else:
+    # Khởi tạo từ đầu với kiểu dữ liệu đúng
     df = pd.DataFrame(columns=[
         'so_phieu', 'bien_so', 'ten_chu_xe', 'yeu_cau_kh', 'ma_kieu_xe', 'so_khung',
         'nguoi_mang_xe', 'sdt_nguoi_mang', 'sdt', 'trang_thai', 'ngay_tao',
@@ -232,6 +311,18 @@ else:
         'thoi_gian_du_kien', 'cvdv_name', 'ghi_chu', 'httt',
         'baohiem_da_duyet', 'ngay_gui_baogia_baohiem', 'so_ngay_nhap_tre'
     ])
+
+    # Khởi tạo kiểu dữ liệu đúng ngay từ đầu
+    df['ly_do_khong_ton'] = ""                    # string rỗng
+    df['is_xe_ton'] = True                        # boolean
+    df['thoi_gian_ton_seconds'] = None            # cho thời gian đóng băng
+    df['thoi_gian_bat_dau_lsc'] = None
+    df['thoi_gian_du_kien'] = None
+    df['ngay_tao'] = None
+    df['ngay_gui_baogia_baohiem'] = None
+
+# Ép lại một số cột cho an toàn
+df['ly_do_khong_ton'] = df['ly_do_khong_ton'].astype(str).replace('nan', '')
 
 # ====================== KHỞI TẠO CỘT MỚI (QUAN TRỌNG) ======================
 if 'thoi_gian_ton_seconds' not in df.columns:
