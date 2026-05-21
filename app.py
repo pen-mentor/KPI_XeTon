@@ -1,6 +1,7 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 import streamlit as st
 import pandas as pd
+import time
 import os
 import re
 
@@ -8,6 +9,8 @@ import re
 @st.dialog("📋 Chi tiết", width="large")
 def show_detail_dialog(row):
     st.subheader(f"Chi tiết - {row.get('so_phieu', 'N/A')}")
+    current_status = row.get('trang_thai', 'Báo Giá')
+    role = st.session_state.role
 
     # Khởi tạo edit_mode nếu chưa có
     if 'edit_mode' not in st.session_state:
@@ -46,7 +49,7 @@ def show_detail_dialog(row):
             st.success("✅ Xe không tồn")
             st.write(f"**Lý do không tồn:** {ly_do if pd.notna(ly_do) else 'Chưa có lý do'}")
 
-        if st.session_state.role in ["admin", "cvdv"]:
+        if st.session_state.role in ["admin", "cvdv"] and current_status not in ["Hoàn Thành", "Hủy"]:
             if st.button("✏️ Cập nhật thông tin", type="primary", key="btn_edit_mode"):
                 st.session_state.edit_mode = True
                 st.rerun()
@@ -85,7 +88,7 @@ def show_detail_dialog(row):
                 st.session_state.edit_mode = False
                 st.rerun()
 
-    if st.session_state.role in ["admin", "cvdv"]:
+    if st.session_state.role in ["admin", "cvdv"] and current_status not in ["Hoàn Thành", "Hủy"]:
         st.divider()
 
     # ====================== THỜI GIAN HOÀN THÀNH DỰ KIẾN ======================
@@ -94,28 +97,47 @@ def show_detail_dialog(row):
 
     if pd.notna(current_du_kien):
         default_date = pd.to_datetime(current_du_kien).date()
-        # Nếu ngày cũ nhỏ hơn hôm nay thì dùng hôm nay
         if default_date < today:
             default_date = today
     else:
-        default_date = today + timedelta(days=3)
+        default_date = today
 
-    if st.session_state.role in ["admin", "cvdv"]:
-        # Admin và CVDV được chỉnh sửa, nhưng không được chọn ngày quá khứ
+    if st.session_state.role in ["admin", "cvdv"] and current_status not in ["Hoàn Thành", "Hủy"]:
+        
         new_du_kien = st.date_input(
             "**Chọn ngày hoàn thành dự kiến**",
             value=default_date,
-            min_value=today,                    # ← Không cho chọn ngày trước hôm nay
+            min_value=today,
             key="date_du_kien"
         )
-        
-        if st.button("💾 Lưu ngày dự kiến", type="primary", key="save_du_kien"):
-            mask = df['so_phieu'] == row['so_phieu']
-            if mask.any():
-                df.loc[mask, 'thoi_gian_du_kien'] = pd.to_datetime(new_du_kien)
-                df.to_csv(DATA_FILE, index=False)
-                st.success("✅ Đã cập nhật thời gian dự kiến!")
+
+        # Kiểm tra xem người dùng có thay đổi ngày chưa
+        original_date = pd.to_datetime(current_du_kien).date() if pd.notna(current_du_kien) else None
+        is_changed = new_du_kien != original_date
+
+        col1, col2 = st.columns([3, 2])
+        with col1:
+            save_btn = st.button("💾 Lưu ngày dự kiến", type="primary", key="save_du_kien")
+
+        with col2:
+            if is_changed:
+                st.markdown("<span style='color: #ffaa00; font-weight: 600;'>⚠️ Chưa lưu</span>", unsafe_allow_html=True)
+            else:
+                st.write("")   # giữ chỗ
+
+        if save_btn:
+            if is_changed:
+                with st.spinner("Đang lưu..."):
+                    mask = df['so_phieu'] == row['so_phieu']
+                    if mask.any():
+                        df.loc[mask, 'thoi_gian_du_kien'] = pd.to_datetime(new_du_kien)
+                        df.to_csv(DATA_FILE, index=False)
+                    time.sleep(0.7)   # để thấy icon xoay rõ
+
+                st.success("✅ Đã lưu!")
                 st.rerun()
+            else:
+                st.info("Bạn chưa thay đổi ngày.")
     else:
         # Manager chỉ xem
         if pd.notna(current_du_kien):
@@ -135,21 +157,49 @@ def show_detail_dialog(row):
     else:
         st.write("**Thời gian tồn:** Đang tính...")
 
-    current_status = row.get('trang_thai', 'Báo Giá')
-    role = st.session_state.role
-
     # ====================== THÔNG TIN BẢO HIỂM ======================
     if pd.notna(row.get('baohiem_da_duyet')):
         st.divider()
         st.subheader("Thông tin bảo hiểm")
-        
-        if row.get('baohiem_da_duyet') == "Chưa duyệt":
-            st.write("❌**Bảo hiểm chưa duyệt**")
+
+        baohiem_status = row.get('baohiem_da_duyet', '')
+        ngay_gui = row.get('ngay_gui_baogia_baohiem')
+
+        # Hiển thị trạng thái hiện tại
+        if baohiem_status == "Đã duyệt":
+            st.success("✅ Bảo hiểm đã duyệt")
         else:
-            st.write("✅**Bảo hiểm đã duyệt**")
-        
-        if row.get('ngay_gui_baogia_baohiem'):
-            st.write(f"**Ngày gửi báo giá bảo hiểm:** {pd.to_datetime(row.get('ngay_gui_baogia_baohiem')).strftime('%d/%m/%Y')}")
+            st.error("❌ Bảo hiểm chưa duyệt")
+
+        if pd.notna(ngay_gui):
+            st.write(f"**Ngày gửi báo giá bảo hiểm:** {pd.to_datetime(ngay_gui).strftime('%d/%m/%Y')}")
+
+        # Chỉ cho phép chỉnh sửa nếu là admin hoặc cvdv và chưa hoàn thành/hủy
+        if st.session_state.role in ["admin", "cvdv"] and current_status not in ["Hoàn Thành", "Hủy"]:
+            
+            # Switch để thay đổi trạng thái bảo hiểm
+            is_approved = st.toggle(
+                "Bảo hiểm đã duyệt",
+                value=(baohiem_status == "Đã duyệt"),
+                key="toggle_baohiem"
+            )
+
+            if st.button("💾 Lưu trạng thái bảo hiểm", type="primary", key="save_baohiem"):
+                mask = df['so_phieu'] == row['so_phieu']
+                if mask.any():
+                    if is_approved:
+                        df.loc[mask, 'baohiem_da_duyet'] = "Đã duyệt"
+                        # Nếu chưa có ngày gửi thì tự động set ngày hôm nay
+                        if pd.isna(ngay_gui):
+                            df.loc[mask, 'ngay_gui_baogia_baohiem'] = datetime.now()
+                    else:
+                        df.loc[mask, 'baohiem_da_duyet'] = "Chưa duyệt"
+                        # Khi chuyển về chưa duyệt thì xóa ngày gửi (nếu muốn)
+                        # df.loc[mask, 'ngay_gui_baogia_baohiem'] = None
+
+                    df.to_csv(DATA_FILE, index=False)
+                    st.success("✅ Đã cập nhật trạng thái bảo hiểm!")
+                    st.rerun()
 
     st.divider()
 
@@ -218,7 +268,7 @@ def show_detail_dialog(row):
 
     # ====================== FORM ĐỔI SỐ PHIẾU (cho phiếu E) ======================
     if st.session_state.get('show_new_so_phieu_input', False):
-        st.warning("⚠️ Phát hiện phiếu hệ 'E'. Vui lòng cập nhật số phiếu mới cho Lệnh Sửa Chữa.")
+        st.warning("⚠️ Vui lòng cập nhật số phiếu chính xác cho lệnh sửa chữa.")
         with st.form(key="change_so_phieu_form"):
             new_so_phieu = st.text_input("Nhập số phiếu mới:", value=row['so_phieu'])
             submit_new_phieu = st.form_submit_button("Xác nhận đổi số phiếu & Lưu")
@@ -500,7 +550,7 @@ elif menu == "🚨 Danh sách Xe Đang Tồn":
         # ====================== TẠO DATAFRAME HIỂN THỊ ======================
         df_display = df_ton[['so_phieu', 'bien_so', 'ten_chu_xe', 'yeu_cau_kh',
                              'trang_thai', 'thoi_gian_ton_display', 'cvdv_name', 
-                             'thoi_gian_ton_gio']].copy()   # ← Giữ lại thoi_gian_ton_gio
+                             'thoi_gian_ton_gio']].copy().reset_index(drop=True)   # ← Giữ lại thoi_gian_ton_gio
 
         # Đổi tên cột
         df_display.columns = [
@@ -540,23 +590,61 @@ elif menu == "🚨 Danh sách Xe Đang Tồn":
     else:
         st.success("✅ Hiện không có xe nào đang tồn.")
         
-# ====================== TẤT CẢ LỆNH ======================
+# ====================== TẤT CẢ LỆNH SỬA CHỮA ======================
 else:
     st.header("📋 TẤT CẢ LỆNH SỬA CHỮA")
+    
     if df.empty:
         st.info("Chưa có dữ liệu nào.")
     else:
+        # Tạo bảng hiển thị (giống cấu trúc màn hình Xe Đang Tồn)
+        df_display = df[['so_phieu', 'bien_so', 'ten_chu_xe', 'ma_kieu_xe', 
+                         'yeu_cau_kh', 'trang_thai', 'so_ngay_nhap_tre', 
+                         'cvdv_name', 'ngay_tao']].copy()
+
+        # Sắp xếp theo ngày tạo mới nhất
+        df_display = df_display.sort_values('ngay_tao', ascending=False).reset_index(drop=True)
+
+        # Đổi tên cột đẹp (tương tự màn hình Xe Đang Tồn)
+        df_display = df_display.rename(columns={
+            'so_phieu': 'Số phiếu',
+            'bien_so': 'Biển số',
+            'ten_chu_xe': 'Tên chủ xe',
+            'ma_kieu_xe': 'Mã kiểu xe',
+            'yeu_cau_kh': 'Yêu cầu KH',
+            'trang_thai': 'Trạng thái',
+            'so_ngay_nhap_tre': 'Số ngày nhập trễ',
+            'cvdv_name': 'CVDV',
+            'ngay_tao': "Ngày tạo"
+        })
+
+        # Hiển thị bảng
         selected = st.dataframe(
-            df.sort_values('ngay_tao', ascending=False),
+            df_display,
+            column_order=[
+                'Số phiếu', 
+                'Biển số', 
+                'Mã kiểu xe',
+                'Tên chủ xe', 
+                'Yêu cầu KH', 
+                'Trạng thái', 
+                'CVDV',
+                'Số ngày nhập trễ'
+            ],
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row"
         )
-        
+
+        # Xử lý khi click vào dòng
         if selected["selection"]["rows"]:
             idx = selected["selection"]["rows"][0]
-            row = df.iloc[idx].to_dict()
+            # Lấy dòng từ df_display (đã reset index)
+            selected_row = df_display.iloc[idx]
+            
+            # Lấy lại dòng đầy đủ từ df gốc theo số phiếu (an toàn nhất)
+            row = df[df['so_phieu'] == selected_row['Số phiếu']].iloc[0].to_dict()
             show_detail_dialog(row)
 
 # Auto save
