@@ -1,9 +1,19 @@
+from supabase import create_client, Client
 from datetime import datetime
 import streamlit as st
 import pandas as pd
 import time
 import os
 import re
+
+# ====================== KẾT NỐI SUPABASE ======================
+@st.cache_resource
+def init_supabase() -> Client:
+    url: str = st.secrets["supabase"]["url"]
+    key: str = st.secrets["supabase"]["key"]
+    return create_client(url, key)
+
+supabase: Client = init_supabase()
 
 # ====================== HÀM MÀN HÌNH CHI TIẾT ======================
 @st.dialog("📋 Chi tiết", width="large")
