@@ -220,7 +220,7 @@ def show_detail_dialog(row):
         st.write("**Thời gian tồn:** Đang tính...")
 
     # ====================== THÔNG TIN BẢO HIỂM ======================
-    if pd.notna(row.get('baohiem_da_duyet')):
+    if pd.notna(row.get('baohiem_da_duyet')) and row.get('baohiem_da_duyet') != "":
         st.divider()
         st.subheader("Thông tin bảo hiểm")
         baohiem_status = row.get('baohiem_da_duyet', '')
