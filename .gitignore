@@ -14,3 +14,6 @@ data/__pycache__/
 # General
 .DS_Store
 *.log
+
+# Tool
+Tools/

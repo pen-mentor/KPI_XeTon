@@ -1,9 +1,20 @@
+from streamlit_cookies_manager import EncryptedCookieManager
 from supabase import create_client, Client
 from datetime import datetime, timezone
 import streamlit as st
 import pandas as pd
+import bcrypt
 import time
 import re
+
+# ====================== COOKIE MANAGER ======================
+cookies = EncryptedCookieManager(
+    prefix="kpi_app_",
+    password=st.secrets["cookies"]["secret_key"]  
+)
+
+if not cookies.ready():
+    st.stop()
 
 # ====================== KẾT NỐI SUPABASE ======================
 @st.cache_resource
@@ -53,6 +64,65 @@ def refresh_data():
 
 df = get_all_data()
 
+# ====================== KHỞI TẠO SESSION ======================
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.session_state.display_name = ""
+    st.session_state.role = ""
+
+# ====================== TỰ ĐỘNG ĐĂNG NHẬP TỪ COOKIE ======================
+if not st.session_state.logged_in:
+    if cookies.get("username") and cookies.get("role"):
+        st.session_state.logged_in = True
+        st.session_state.username = cookies.get("username")
+        st.session_state.display_name = cookies.get("display_name", "")
+        st.session_state.role = cookies.get("role")
+
+# ====================== FORM ĐĂNG NHẬP ======================
+if not st.session_state.logged_in:
+    st.set_page_config(page_title="Đăng nhập - KPI", layout="centered")
+    st.title("🚗 Đăng nhập Hệ thống KPI")
+    st.markdown("**VinFast Thịnh Phát Bình Long**")
+
+    username = st.text_input("Tên đăng nhập (Username)")
+    password = st.text_input("Mật khẩu", type="password")
+
+    if st.button("Đăng nhập", type="primary"):
+        try:
+            # Lấy thông tin user từ Supabase
+            response = supabase.table("users").select("*").eq("username", username).execute()
+            
+            if response.data:
+                user = response.data[0]
+                stored_hash = user["password_hash"].encode('utf-8')
+                
+                # Kiểm tra password bằng bcrypt
+                if bcrypt.checkpw(password.encode('utf-8'), stored_hash):
+                    # Đăng nhập thành công
+                    st.session_state.logged_in = True
+                    st.session_state.username = user["username"]
+                    st.session_state.display_name = user["display_name"]
+                    st.session_state.role = user["role"]
+
+                    # Lưu vào cookie
+                    cookies["username"] = user["username"]
+                    cookies["display_name"] = user["display_name"]
+                    cookies["role"] = user["role"]
+                    cookies.save()
+
+                    st.success(f"Đăng nhập thành công! Chào {user['display_name']}")
+                    st.rerun()
+                else:
+                    st.error("❌ Sai mật khẩu!")
+            else:
+                st.error("❌ Tên đăng nhập không tồn tại!")
+
+        except Exception as e:
+            st.error(f"Lỗi khi đăng nhập: {e}")
+
+    st.stop()
+
 # ====================== HÀM MÀN HÌNH CHI TIẾT  ======================
 @st.dialog("📋 Chi tiết", width="large")
 def show_detail_dialog(row):
@@ -80,16 +150,14 @@ def show_detail_dialog(row):
 
     st.divider()
 
-    # ====================== XEM BÁO GIÁ (Mở tab mới ngay) ======================
+    # ====================== XEM BÁO GIÁ ======================
     if row.get('file_bao_gia'):
         try:
-            # Lấy Signed URL
             signed_url = supabase.storage.from_("bao-gia").create_signed_url(
                 path=row['file_bao_gia'],
                 expires_in=3600
             )['signedURL']
 
-            # Tạo nút HTML mở tab mới ngay khi click
             button_html = f"""
             <a href="{signed_url}" target="_blank" style="text-decoration: none;">
                 <button style="
@@ -306,49 +374,25 @@ def show_detail_dialog(row):
         except Exception as e:
             st.error(f"Lỗi khi cập nhật: {e}")
 
-# ====================== ĐĂNG NHẬP ======================
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.username = ""
-    st.session_state.display_name = ""
-    st.session_state.role = ""
-
-USERS = {
-    "quyennv": {"password": "123", "display_name": "Nguyễn Văn Quyền", "role": "cvdv"},
-    "sonnt": {"password": "123", "display_name": "Nguyễn Trịnh Sơn", "role": "cvdv"},
-    "ngocbt": {"password": "123", "display_name": "Bùi Tuấn Ngọc", "role": "cvdv"},
-    "pvgkhanh": {"password": "1234Ac12@", "display_name": "Phạm Viết Gia Khánh", "role": "admin"},
-    "quyenttk": {"password": "090524@quyen", "display_name": "Trần Thị Kim Quyên", "role": "manager"},
-}
-
-if not st.session_state.logged_in:
-    st.set_page_config(page_title="Đăng nhập - KPI", layout="centered")
-    st.title("🚗 Đăng nhập Hệ thống KPI")
-    st.markdown("**VinFast Thịnh Phát Bình Long**")
-
-    username = st.text_input("Tên đăng nhập (Username)")
-    password = st.text_input("Mật khẩu", type="password")
-
-    if st.button("Đăng nhập", type="primary"):
-        if username in USERS and USERS[username]["password"] == password:
-            st.session_state.logged_in = True
-            st.session_state.username = username
-            st.session_state.display_name = USERS[username]["display_name"]
-            st.session_state.role = USERS[username]["role"]
-            st.success(f"Đăng nhập thành công! Chào {st.session_state.display_name}")
-            st.rerun()
-        else:
-            st.error("❌ Sai tên đăng nhập hoặc mật khẩu!")
-    st.stop()
-
 # ====================== APP CHÍNH ======================
 st.set_page_config(page_title="KPI Xe Tồn 24h", layout="wide", page_icon="🚗")
 st.title("🚗 QUẢN LÝ XE TỒN 24H - KPI QUÝ II")
 st.markdown(f"**Người dùng:** {st.session_state.display_name} | **Vai trò:** {st.session_state.role.upper()}")
 
+# ====================== NÚT ĐĂNG XUẤT ======================
 if st.sidebar.button("🚪 Đăng xuất"):
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
+    # Xóa session state
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.session_state.display_name = ""
+    st.session_state.role = ""
+
+    # Xóa cookie (cách ổn định nhất)
+    cookies["username"] = ""
+    cookies["display_name"] = ""
+    cookies["role"] = ""
+    cookies.save()
+
     st.rerun()
 
 cvdv_name = st.session_state.display_name
